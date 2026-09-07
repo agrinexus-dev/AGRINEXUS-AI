@@ -1,0 +1,24 @@
+{
+  "name": "@agrinexus/config",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "typescript",
+    "eslint.config.mjs",
+    "prettier.config.mjs"
+  ],
+  "exports": {
+    "./typescript/base.json": "./typescript/base.json",
+    "./typescript/nextjs.json": "./typescript/nextjs.json",
+    "./typescript/nestjs.json": "./typescript/nestjs.json",
+    "./eslint": "./eslint.config.mjs",
+    "./prettier": "./prettier.config.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.65.0"
+  }
+}

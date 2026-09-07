@@ -1,0 +1,210 @@
+/* ==========================================================================
+   Farmer section — scoped neumorphic theme (Phase 1 Part 13)
+
+   Redefines the SAME semantic CSS custom properties every shared
+   `@agrinexus/ui` component already consumes (`--background`, `--surface`,
+   `--shadow-panel-value`, `--radius`, ...) inside a `.farmer-theme` wrapper.
+   Custom properties resolve from the nearest ancestor that defines them, so
+   `<Card>`/`<Button>`/`<Typography>` etc. render with this warm, soft,
+   light palette anywhere under the wrapper — with ZERO component changes —
+   while every Operator/Admin screen outside it keeps the existing dark
+   "instrument panel" theme untouched (see globals.css). This is the
+   "simpler farmer-friendly presentation layer on top of shared
+   infrastructure" Part 19 describes, not a second design system: the
+   token NAMES are identical, only their values change.
+   ========================================================================== */
+
+.farmer-theme {
+  /* ---- Surfaces ----
+     MVP-UI.1-B (Desktop Foundation & Visual Hierarchy) — the audit
+     (MVP-UI.1-A §13) traced the "washed out" complaint to `--surface`
+     being IDENTICAL to `--background` (both 0.96), leaving the neumorphic
+     shadow pair as the ONLY depth cue. `--surface` is now a touch lighter
+     than `--background` — still warm, still low-contrast, still relying
+     primarily on the shadow pair (this is NOT a redesign of the
+     neumorphic system, just a small assist to it) — giving a card a real,
+     if subtle, color-contrast cue in addition to its shadow. Per that
+     milestone's own explicit instruction, this does NOT darken anything
+     and preserves the existing warm cream hue (95° in this OKLCH space)
+     throughout. */
+  --background: oklch(0.96 0.014 95);
+  --surface: oklch(0.975 0.012 95);
+  --surface-elevated: oklch(0.99 0.008 95);
+  --overlay: oklch(0.3 0.02 95 / 45%);
+
+  /* ---- Borders & focus ----
+     MVP-UI.1-B — opacity raised modestly (45%→58%, 25%→38%) so a card's
+     edge is actually perceptible at a glance, not just implied by its
+     shadow — still a hairline, not a heavy outline; same hue, same warmth. */
+  --border: oklch(0.75 0.02 95 / 58%);
+  --border-subtle: oklch(0.8 0.015 95 / 38%);
+
+  /* ---- Foreground — warm charcoal, never pure black (Part 13: readable, not harsh) ---- */
+  --foreground: oklch(0.32 0.025 140);
+  --foreground-muted: oklch(0.48 0.02 125);
+  --foreground-subtle: oklch(0.6 0.015 110);
+
+  /* ---- Accent — a farm green instead of Operator's signal cyan ---- */
+  --accent: oklch(0.62 0.135 148);
+  --accent-foreground: oklch(0.99 0.005 148);
+  --accent-muted: oklch(0.62 0.135 148 / 16%);
+
+  /* ---- Status — same hues as Operator, lifted for a light surface ---- */
+  --success: oklch(0.64 0.14 150);
+  --success-foreground: oklch(0.99 0 0);
+  --success-muted: oklch(0.64 0.14 150 / 16%);
+  --warning: oklch(0.76 0.15 80);
+  --warning-foreground: oklch(0.28 0.03 80);
+  --warning-muted: oklch(0.76 0.15 80 / 18%);
+  --critical: oklch(0.6 0.2 25);
+  --critical-foreground: oklch(0.99 0 0);
+  --critical-muted: oklch(0.6 0.2 25 / 16%);
+
+  /* ---- Radius — larger, softer surfaces ---- */
+  --radius: 1.25rem;
+
+  /* ---- Shadow — the actual neumorphic effect: a raised dual shadow
+     (dark toward the light source's opposite corner, a soft light
+     highlight toward the source) on every Card/Panel that already uses
+     `shadow-panel`/`shadow-elevated`. ---- */
+  --shadow-panel-value:
+    7px 7px 16px oklch(0.6 0.02 95 / 30%),
+    -7px -7px 16px oklch(1 0 0 / 80%);
+  --shadow-elevated-value:
+    10px 10px 24px oklch(0.55 0.02 95 / 30%),
+    -10px -10px 24px oklch(1 0 0 / 85%);
+  --shadow-glow-value:
+    0 0 0 1px var(--accent-muted), 0 0 20px oklch(0.62 0.135 148 / 22%);
+}
+
+/* An inset variant for pressed/active states — not part of the shared
+   token set (no existing component needs it), used directly via
+   `shadow-[var(--shadow-neu-inset)]` by Farmer-only components. */
+.farmer-theme {
+  --shadow-neu-inset:
+    inset 4px 4px 10px oklch(0.6 0.02 95 / 28%),
+    inset -4px -4px 10px oklch(1 0 0 / 75%);
+}
+
+/* ==========================================================================
+   MVP-UI.1-F (Farmer Dark Theme Foundation)
+
+   `.farmer-theme.dark` overrides the SAME token names the light block above
+   defines — same mechanism, same "zero component changes" property this
+   whole file already documents, just a second value set selected by an
+   additional class rather than the only one. Every `@agrinexus/ui`
+   component (Card's variants, Button, Switch, Typography, the raw
+   `<textarea>`/`<input>` elements in AURA's composer/Settings/login) was
+   audited before writing this block: none of them hard-code a raw color —
+   they all resolve through `--color-*` — so this block is the ENTIRE
+   change needed to theme every one of those surfaces; no component file
+   needed to change. The two exceptions found (`digital-twin/ui/mini-map.tsx`,
+   `digital-twin/ui/intelligence-legend.tsx`) use fixed hex colors
+   deliberately, not as an oversight: they mirror the exact severity/status
+   color vocabulary the (frozen) 3D scene's own marker/overlay materials
+   use (e.g. `#f6ad55` for "low/warning" appears in both the minimap and
+   `scene/sensors/sensor-markers.tsx`), so a Farmer reading a marker's
+   color in the 3D view and in the 2D minimap sees the same color — changing
+   them for dark mode would break that cross-reference and redesign a
+   shared data-visualization vocabulary, which is out of this milestone's
+   scope (theme foundation, not a redesign) — left untouched, disclosed
+   here rather than silently skipped.
+
+   PALETTE DIRECTION — this milestone's own explicit brief: "deep neutral/
+   green-tinted surfaces, restrained agricultural green accents, clear
+   surface hierarchy... closer to Apple/Tesla/DJI FlightHub/Linear than
+   gaming or crypto dashboards." Every neutral below carries the SAME small
+   green hue (145°, chosen to sit next to this theme's own 148° accent hue
+   without being identical to it) at very low chroma (0.008-0.014) — a
+   whisper of "agricultural," never a green interface — mirroring the exact
+   technique Operator's own dark neutrals already use (a small hue+chroma
+   tint on every surface, see globals.css `:root`), just shifted from
+   Operator's cyan-blue-adjacent 260° to a green-adjacent 145°.
+   ========================================================================== */
+.farmer-theme.dark {
+  /* ---- Surfaces — three visible steps: background < surface <
+     surface-elevated, each a deliberate lightness increment (0.165 → 0.205
+     → 0.25) so a Card sitting on the page background, and an "elevated"
+     Card sitting on a Card, both read as genuinely one step up — never
+     "everything is the same dark rectangle." Never pure black (0.145 is
+     Operator's own darkest value; Farmer's dark starts a touch lighter,
+     0.165, for the calmer, less "cockpit" feel this milestone asks for). */
+  --background: oklch(0.165 0.01 145);
+  --surface: oklch(0.205 0.012 145);
+  --surface-elevated: oklch(0.25 0.014 145);
+  --overlay: oklch(0.08 0.01 145 / 72%);
+
+  /* ---- Borders & focus — low-contrast neutral hairlines (white-alpha over
+     a dark surface, the same technique Operator's own dark border already
+     uses), visible enough to read a Card's edge without ever becoming a
+     bright/glowing outline. `--ring` inherits `var(--accent)` unchanged
+     from the light block — focus must stay clearly visible against dark
+     surfaces too, and the accent green already provides that. */
+  --border: oklch(1 0 0 / 9%);
+  --border-subtle: oklch(1 0 0 / 5%);
+
+  /* ---- Foreground — soft near-white, never pure white (0.96, not 1.0),
+     carrying the same faint green tint as the surfaces for a cohesive
+     palette rather than a stark white-on-tinted-gray mismatch. */
+  --foreground: oklch(0.96 0.006 145);
+  --foreground-muted: oklch(0.74 0.008 145);
+  --foreground-subtle: oklch(0.54 0.008 145);
+
+  /* ---- Accent — the same agricultural green family as the light theme's
+     own `--accent` (hue 148, unchanged), lifted in lightness/chroma
+     (0.62→0.70, 0.135→0.14) so it reads as a clear, legible signal against
+     a dark surface rather than looking muddy — the same "brighten the
+     accent for dark backgrounds" adjustment Operator's own accent already
+     makes relative to a hypothetical light equivalent. This accent is used
+     exactly where the light theme already uses it (active nav, primary
+     actions, AURA identity, focus, selected state) — never as a
+     background fill; the interface stays neutral, with green as the one
+     recognizable signal, per this milestone's own "accent should be a
+     signal, not the background" rule. */
+  --accent: oklch(0.7 0.14 148);
+  --accent-foreground: oklch(0.145 0.02 148);
+  --accent-muted: oklch(0.7 0.14 148 / 16%);
+
+  /* ---- Status — deliberately NOT built from the accent hue (148): each
+     carries its own distinct, restrained hue (155 success / 80 warning /
+     25 critical) — the SAME dark-tuned "instrument-panel, not neon" values
+     Operator's own dark theme already uses (globals.css `:root`/`.dark`),
+     reused verbatim rather than inventing a second set of status colors,
+     so "warning" or "critical" means the same thing and looks the same
+     whether a Farmer is looking at Operator or Farmer surfaces. Success's
+     155° hue sits close enough to the 148° accent to still read as
+     "green," while remaining a visibly distinct shade from it — satisfying
+     this milestone's own "do not turn all status colors into green" rule
+     without abandoning the near-universal green-means-success convention. */
+  --success: oklch(0.72 0.13 155);
+  --success-foreground: oklch(0.145 0.02 155);
+  --success-muted: oklch(0.72 0.13 155 / 14%);
+  --warning: oklch(0.78 0.14 80);
+  --warning-foreground: oklch(0.145 0.02 80);
+  --warning-muted: oklch(0.78 0.14 80 / 14%);
+  --critical: oklch(0.66 0.19 25);
+  --critical-foreground: oklch(0.98 0.01 25);
+  --critical-muted: oklch(0.66 0.19 25 / 14%);
+
+  /* ---- Shadow — restrained, single-tone dark shadows (no neumorphic
+     highlight edge): the light theme's dual light+dark shadow pair reads
+     as a soft "raised" surface because a bright highlight is genuinely
+     plausible on a light background; the same highlight on a dark
+     background reads as an unwanted glow, which this milestone's own
+     "avoid excessive glow" rule explicitly warns against. `shadow-panel`/
+     `shadow-elevated` use the same restrained, low-opacity dark-only
+     shadow values Operator's own dark theme already uses (globals.css) —
+     "subtle elevation... no giant shadows" applied consistently across
+     both dark surfaces in this product, not a new shadow language. */
+  --shadow-panel-value: 0 1px 2px oklch(0 0 0 / 30%), 0 8px 20px oklch(0 0 0 / 24%);
+  --shadow-elevated-value: 0 4px 10px oklch(0 0 0 / 34%), 0 20px 40px oklch(0 0 0 / 28%);
+  --shadow-glow-value: 0 0 0 1px var(--accent-muted), 0 0 20px oklch(0.7 0.14 148 / 18%);
+
+  /* ---- Inset — the Farmer-only "pressed/active" cue (active nav item,
+     selected AURA conversation row) keeps its restrained neumorphic
+     INSET character (this milestone's own "restrained neumorphic
+     influence... subtle inset depth" direction), but drops the light
+     theme's bright highlight component entirely (4% white, not 75%) —
+     enough to read as "recessed," never as a glowing edge. */
+  --shadow-neu-inset: inset 1px 1px 3px oklch(0 0 0 / 35%), inset -1px -1px 2px oklch(1 0 0 / 4%);
+}

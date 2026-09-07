@@ -1,0 +1,280 @@
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+/* ==========================================================================
+   AgriNexus AI — Design Tokens
+   Dark theme only for V1. Semantic (not raw) values everywhere so a future
+   `.light` block can be introduced without touching component code — every
+   component consumes `--color-*` / `--radius-*` / etc., never a raw value.
+   ========================================================================== */
+
+@theme inline {
+  /* Color — surfaces */
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-overlay: var(--overlay);
+
+  /* Color — borders & focus */
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-ring: var(--ring);
+
+  /* Color — foreground */
+  --color-foreground: var(--foreground);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-foreground-subtle: var(--foreground-subtle);
+
+  /* Color — accent (signal / primary action) */
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-muted: var(--accent-muted);
+
+  /* Color — status */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-muted: var(--success-muted);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-muted: var(--warning-muted);
+  --color-critical: var(--critical);
+  --color-critical-foreground: var(--critical-foreground);
+  --color-critical-muted: var(--critical-muted);
+
+  /* Typography */
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+
+  /* Radius */
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 6px);
+
+  /* Shadow */
+  --shadow-panel: var(--shadow-panel-value);
+  --shadow-elevated: var(--shadow-elevated-value);
+  --shadow-glow: var(--shadow-glow-value);
+
+  /* Easing */
+  --ease-standard: var(--ease-standard-value);
+  --ease-enter: var(--ease-enter-value);
+  --ease-exit: var(--ease-exit-value);
+  --ease-emphasized: var(--ease-emphasized-value);
+
+  /* Breakpoints (centralized explicitly; values match platform defaults) */
+  --breakpoint-sm: 40rem;
+  --breakpoint-md: 48rem;
+  --breakpoint-lg: 64rem;
+  --breakpoint-xl: 80rem;
+  --breakpoint-2xl: 96rem;
+}
+
+:root {
+  /* ---- Surfaces ---- */
+  --background: oklch(0.145 0.004 260);
+  --surface: oklch(0.19 0.006 260);
+  --surface-elevated: oklch(0.235 0.008 260);
+  --overlay: oklch(0.09 0.004 260 / 72%);
+
+  /* ---- Borders & focus ---- */
+  --border: oklch(1 0 0 / 8%);
+  --border-subtle: oklch(1 0 0 / 5%);
+  --ring: var(--accent);
+
+  /* ---- Foreground ---- */
+  --foreground: oklch(0.98 0.002 260);
+  --foreground-muted: oklch(0.72 0.006 260);
+  --foreground-subtle: oklch(0.52 0.006 260);
+
+  /* ---- Accent — restrained cyan-blue "signal" color, used sparingly ---- */
+  --accent: oklch(0.72 0.135 220);
+  --accent-foreground: oklch(0.145 0.02 220);
+  --accent-muted: oklch(0.72 0.135 220 / 14%);
+
+  /* ---- Status — desaturated, instrument-panel tones, not neon ---- */
+  --success: oklch(0.72 0.13 155);
+  --success-foreground: oklch(0.145 0.02 155);
+  --success-muted: oklch(0.72 0.13 155 / 14%);
+  --warning: oklch(0.78 0.14 80);
+  --warning-foreground: oklch(0.145 0.02 80);
+  --warning-muted: oklch(0.78 0.14 80 / 14%);
+  --critical: oklch(0.66 0.19 25);
+  --critical-foreground: oklch(0.98 0.01 25);
+  --critical-muted: oklch(0.66 0.19 25 / 14%);
+
+  /* ---- Typography ---- */
+  --font-family-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-family-mono:
+    "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Code", monospace;
+
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.5rem;
+  --text-md: 1.0625rem;
+  --text-md--line-height: 1.6rem;
+  --text-lg: 1.25rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl: 1.5rem;
+  --text-xl--line-height: 2rem;
+  --text-2xl: 1.875rem;
+  --text-2xl--line-height: 2.375rem;
+  --text-3xl: 2.375rem;
+  --text-3xl--line-height: 2.75rem;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* ---- Radius base ---- */
+  --radius: 0.75rem;
+
+  /* ---- Shadow — soft, low-contrast; no hard drop shadows ---- */
+  --shadow-panel-value: 0 1px 2px oklch(0 0 0 / 24%), 0 8px 24px oklch(0 0 0 / 20%);
+  --shadow-elevated-value: 0 4px 12px oklch(0 0 0 / 32%), 0 24px 48px oklch(0 0 0 / 28%);
+  --shadow-glow-value: 0 0 0 1px var(--accent-muted), 0 0 24px oklch(0.72 0.135 220 / 20%);
+
+  /* ---- Opacity ---- */
+  --opacity-disabled: 0.45;
+  --opacity-hover: 0.08;
+  --opacity-pressed: 0.14;
+  --opacity-subtle: 0.6;
+
+  /* ---- Motion duration ---- */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --duration-slower: 480ms;
+
+  /* ---- Easing ---- */
+  --ease-standard-value: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-enter-value: cubic-bezier(0, 0, 0.2, 1);
+  --ease-exit-value: cubic-bezier(0.4, 0, 1, 1);
+  --ease-emphasized-value: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ---- Z-index ---- */
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-overlay: 300;
+  --z-modal: 400;
+  --z-popover: 500;
+  --z-tooltip: 600;
+  --z-toast: 700;
+}
+
+/*
+ * `.dark` mirrors `:root` so the design system already works once a
+ * ThemeProvider starts toggling a class — no token restructuring needed
+ * when light mode is introduced. A future `.light` (or `:root` swap) block
+ * would only need to override the values above, never the components.
+ */
+.dark {
+  --background: oklch(0.145 0.004 260);
+  --surface: oklch(0.19 0.006 260);
+  --surface-elevated: oklch(0.235 0.008 260);
+  --overlay: oklch(0.09 0.004 260 / 72%);
+  --border: oklch(1 0 0 / 8%);
+  --border-subtle: oklch(1 0 0 / 5%);
+  --foreground: oklch(0.98 0.002 260);
+  --foreground-muted: oklch(0.72 0.006 260);
+  --foreground-subtle: oklch(0.52 0.006 260);
+}
+
+/* ==========================================================================
+   UI-UPGRADE.2 (Operator Light Theme Foundation)
+
+   `.light` is the Operator counterpart to `.farmer-theme` (Farmer's own
+   light block, `app/farmer/farmer-theme.css`): same token NAMES, same
+   "redefine on a class, let the cascade do the rest" mechanism, deliberately
+   a DIFFERENT palette — Operator keeps its own cool blue-gray neutral hue
+   (260°, matching the dark theme's own tint) and its own cyan-blue accent
+   hue (220°), never Farmer's warm agricultural green/95° hue. `:root` and
+   `.dark` above are completely UNCHANGED by this milestone — dark stays the
+   pixel-identical baseline it already was; `.light` is purely additive.
+   `theme-provider.tsx` toggles between `.dark` and `.light` on `<html>`
+   (mutually exclusive), so exactly one of this block or the one above ever
+   applies at a time — no reliance on cascade/specificity ordering between
+   them.
+
+   Surface hierarchy ascends in lightness (background < surface <
+   surface-elevated), the same direction Farmer's own light block already
+   uses — a card reads as "closer to the light source" the more elevated it
+   is. Never pure white (`--surface-elevated` stops at 0.998, `--background`
+   at 0.965) and never pure black (`--foreground` stops at 0.22) — matching
+   this milestone's own explicit "avoid pure white everywhere" / "not black
+   text everywhere" instruction.
+
+   `--border`/`--border-subtle` use a DARK-alpha (not the dark theme's
+   white-alpha) — a white-alpha hairline is invisible on a light surface;
+   this is the same fix Farmer's own light block already applies for the
+   identical reason.
+
+   `--accent` and every status color are lifted/darkened relative to the
+   dark theme's values (not merely copied) so they stay legible against a
+   light surface — the same "adjust lightness for the surface it sits on"
+   principle Farmer's own light-vs-dark accent adjustment already
+   demonstrates, applied in the opposite direction (dark mode brightens for
+   a dark surface; light mode deepens for a light one).
+   ========================================================================== */
+.light {
+  /* ---- Surfaces ---- */
+  --background: oklch(0.965 0.004 260);
+  --surface: oklch(0.985 0.003 260);
+  --surface-elevated: oklch(0.998 0.002 260);
+  --overlay: oklch(0.15 0.01 260 / 40%);
+
+  /* ---- Borders & focus — dark-alpha, visible against a light surface ---- */
+  --border: oklch(0.25 0.02 260 / 12%);
+  --border-subtle: oklch(0.25 0.02 260 / 7%);
+
+  /* ---- Foreground — near-black cool charcoal, never pure black ---- */
+  --foreground: oklch(0.22 0.015 260);
+  --foreground-muted: oklch(0.45 0.015 260);
+  --foreground-subtle: oklch(0.6 0.012 260);
+
+  /* ---- Accent — same 220° signal hue as dark, deepened/more saturated
+     for legibility on a light surface (dark mode brightens the identical
+     hue for the opposite reason) ---- */
+  --accent: oklch(0.55 0.16 220);
+  --accent-foreground: oklch(0.99 0.005 220);
+  --accent-muted: oklch(0.55 0.16 220 / 12%);
+
+  /* ---- Status — same hues as dark, re-tuned for a light surface; amber
+     keeps a dark foreground (the conventional readable pairing for an
+     amber/yellow fill), matching how `--warning-foreground` already reads
+     dark-on-warning in the dark theme above ---- */
+  --success: oklch(0.5 0.14 155);
+  --success-foreground: oklch(0.99 0 0);
+  --success-muted: oklch(0.5 0.14 155 / 12%);
+  --warning: oklch(0.6 0.15 80);
+  --warning-foreground: oklch(0.2 0.03 80);
+  --warning-muted: oklch(0.6 0.15 80 / 14%);
+  --critical: oklch(0.55 0.2 25);
+  --critical-foreground: oklch(0.99 0.005 25);
+  --critical-muted: oklch(0.55 0.2 25 / 12%);
+
+  /* ---- Shadow — dark-alpha (not the dark theme's black-on-black, which
+     would be invisible either way, but a light theme's shadow must read
+     as a soft, low-contrast cast shadow, not a heavy drop shadow) ---- */
+  --shadow-panel-value: 0 1px 2px oklch(0.25 0.02 260 / 6%), 0 8px 20px oklch(0.25 0.02 260 / 8%);
+  --shadow-elevated-value: 0 4px 10px oklch(0.25 0.02 260 / 8%), 0 20px 40px oklch(0.25 0.02 260 / 10%);
+  --shadow-glow-value: 0 0 0 1px var(--accent-muted), 0 0 20px oklch(0.55 0.16 220 / 12%);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+}

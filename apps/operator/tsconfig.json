@@ -1,0 +1,10 @@
+{
+  "extends": "@agrinexus/config/typescript/nextjs.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*", "../../packages/ui/src/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

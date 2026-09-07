@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.turbo/
+*.tsbuildinfo
+packages/ui/storybook-static/
+
+# Prisma generated client — the schema lives in apps/backend/prisma, but its
+# generator `output` is redirected into apps/operator (see that schema file's
+# own doc comment for why) — regenerate with `pnpm db:generate` from
+# apps/backend; never commit the output itself.
+apps/operator/src/lib/prisma/generated/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editors / OS / local tooling
+.DS_Store
+Thumbs.db
+*.swp
+*.pem
+.idea/
+.claude/
+.vercel
+
+# Firmware build artifacts
+firmware/**/.pio/
+firmware/**/build/
+
+# Test / coverage
+coverage/
+
+# Playwright test artifacts (traces/screenshots/HTML reports) — local-only
+# diagnostic output, never committed (may incidentally capture app UI state).
+apps/operator/test-results/
+apps/operator/playwright-report/
+apps/operator/blob-report/
+apps/operator/playwright/.cache/
+
+# Misc
+*.local

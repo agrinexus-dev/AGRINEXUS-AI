@@ -1,0 +1,969 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  // Redirected into apps/operator's own source tree — the
+  // ACTUAL, working API convention in this project is Next.js Route
+  // Handlers under apps/operator/src/app/api/** (see aura/chat, aura/status),
+  // not the unwired NestJS app in apps/backend (zero controllers/providers,
+  // never run). Rather than duplicate the schema into a second file (a real
+  // "duplicated source of truth"), this schema stays the single canonical
+  // definition — only the GENERATED CLIENT's output location moves to where
+  // the code that actually needs to import it lives. Run `pnpm db:generate`
+  // from apps/backend (or `npx prisma generate` from this directory) after
+  // any schema change; apps/operator does not re-declare this schema.
+  output   = "../../operator/src/lib/prisma/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =============================================================================
+// Persistence models: Alerts, Sensors, Plots, Drones, Robots, Missions,
+// Findings, Farm/User/Membership, and AURA chat history + routing config.
+// =============================================================================
+//
+// Deliberately scoped: this schema does NOT contain Telemetry,
+// WeatherObservation, EnergyRecord, Report, or Threshold — those stay
+// out of Postgres by design.
+//
+// Plot is READ-ONLY at the API layer — audited the existing UI and
+// found no Add/Edit/Delete Plot feature anywhere (unlike Sensor, which has
+// all three); `plots-service.ts`/the API surface reflect that honestly
+// (list + get only), following the "don't add CRUD the
+// UI doesn't need" rule.
+//
+// Drone/Robot rows are IDENTITY/CONFIGURATION ONLY — deliberately do NOT
+// contain the live/simulated telemetry fields `DroneRecord`/`RobotRecord`
+// carry client-side (status, batteryPercent, position, health, signal,
+// heading,...). The design rule is explicit: "Do not migrate every
+// telemetry tick into Postgres... Telemetry simulation remains
+// frontend-side... Do not introduce realtime telemetry infrastructure."
+// Every consumer's live state (Drone Fleet page, Digital Twin, AURA)
+// continues to come from the Fleet/Robot Zustand stores exactly as before;
+// only identity/config (name, model, spec, home location) plus the mission
+// relationship are persisted. A freshly-hydrated Drone/Robot row is given
+// the same honest "not yet dispatched" defaults `buildNewDroneRecord`/
+// `buildNewRobotRecord` already use for a newly added unit — never a
+// fabricated live reading.
+//
+// DroneMission/RobotMission have real Postgres rows and REAL
+// foreign keys to Plot/Drone/Robot — closing the gap the report
+// flagged ("Missions have no backing table yet"). Persistence happens at
+// LIFECYCLE BOUNDARIES only (create/assign/settings/generate/start/pause/
+// resume/cancel/complete/duplicate/delete) — the second-by-second
+// simulation tick (`use-mission-simulation.ts`/`use-robot-mission-
+// simulation.ts`) still runs entirely client-side and is never written to
+// the database — deliberately "do NOT write to Postgres every
+// simulation tick."
+
+model User {
+  id        String   @id
+  email     String   @unique
+  name      String
+  /// Default/landing role — which section a login lands on when a profile
+  /// has more than one authorized role ("the system may
+  /// open the user's default interface"). Kept as the pre-existing scalar
+  /// field rather than removed; `roles` below is the new, additive source
+  /// of truth for what a profile is actually AUTHORIZED to access.
+  role      Role
+  /// The full set of roles this profile may switch
+  /// between (e.g. a Farmer+Operator account). Always a superset
+  /// containing `role`. A native Postgres enum array, additive alongside
+  /// the untouched `role` column above — no existing column dropped.
+  roles     Role[]   @default([])
+  /// Real credential storage backing the Credentials
+  /// provider (`lib/auth/user-source.ts`), replacing the previous
+  /// hardcoded in-memory SEED_USERS array. Never read/exposed outside that
+  /// one module. Defaults to an intentionally unmatchable placeholder (not
+  /// a valid bcrypt hash) so any row created before a real hash is set is
+  /// fail-closed, never fail-open.
+  passwordHash String @default("unset")
+  /// "Disabled users must not remain authorized."
+  /// Checked in `findUserByCredentials` at sign-in; see that module's own
+  /// doc comment for the stateless-JWT caveat on already-issued sessions.
+  status    UserStatus @default(active)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @default(now()) @updatedAt
+
+  ownedFarms      Farm[]           @relation("FarmOwner")
+  /// Farm assignment for non-owner roles (Farmer), kept
+  /// distinct from `ownedFarms` above rather than overloading ownership.
+  /// This is exactly the "real per-user FarmMember table" the pre-existing
+  /// note on `getFarmForSession` already called out as "the natural next
+  /// step once a second real farm exists" — the Farmer role is that step.
+  farmMemberships FarmMembership[]
+  /// This user's own AURA conversations (per-user, not
+  /// merely per-farm — see `AuraConversation`'s own doc comment).
+  auraConversations AuraConversation[]
+}
+
+enum Role {
+  admin
+  operator
+  farmer
+}
+
+enum UserStatus {
+  active
+  disabled
+}
+
+/// Join table resolving which Farm a Farmer-role session
+/// may access. Deliberately NOT reused for admin/operator (their existing
+/// owner-based resolution in `getFarmForSession` is untouched) — additive,
+/// parallel path for the one role that previously resolved to `null`.
+model FarmMembership {
+  id        String   @id @default(cuid())
+  userId    String
+  farmId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  farm      Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, farmId])
+}
+
+/// The ownership boundary the API layer requires
+/// ("Authenticated User → Owned Farm/Workspace → Sensors/Alerts").
+/// Deliberately minimal — still no Plot/Drone/Robot relations (none of
+/// those are migrated yet).
+model Farm {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String
+  owner     User     @relation("FarmOwner", fields: [ownerId], references: [id])
+  createdAt DateTime @default(now())
+
+  /// The two global autonomous-behavior toggles
+  /// (`lib/autonomous/autonomous-behavior.ts`), persisted per-farm. Were
+  /// previously Zustand-only ("session-only... not durable business data" —
+  /// see that decision's own now-superseded doc comment in
+  /// `fleet-store.ts`/`robot-store.ts`); these toggles must survive
+  /// a refresh, which genuinely has no existing durable field to reuse, so
+  /// this is a real, minimal, additive column pair (default `false`, same
+  /// default the in-memory flag always had — no behavior change for any
+  /// farm that never touched the toggle).
+  droneAutonomousEnabled Boolean @default(false)
+  robotAutonomousEnabled Boolean @default(false)
+
+  /// The farm's real-world location (plain decimal degrees),
+  /// used to request real weather data from the Open-Meteo API
+  /// (`lib/weather/weather-provider.ts`). Deliberately separate from
+  /// `Plot.centerX/centerZ` above, which that model's own doc comment
+  /// already documents as simulation scene-space units, not GPS — this is
+  /// the first genuinely real-world-geospatial field in this schema.
+  /// Nullable: no farm in this seeded demo environment has a real-world
+  /// location configured yet, and the instructions explicitly
+  /// forbid inventing one. `null` is a real, honest, and fully supported
+  /// state throughout the weather pipeline (API route, client store, the
+  /// Weather page, and AURA's context all handle it as "farm location not
+  /// configured" — never a fabricated fallback coordinate).
+  latitude  Float?
+  longitude Float?
+
+  alerts                  Alert[]
+  sensors                 Sensor[]
+  plots                   Plot[]
+  drones                  Drone[]
+  robots                  Robot[]
+  droneMissions           DroneMission[]
+  robotMissions           RobotMission[]
+  cropFindings            CropFinding[]
+  recurringMissionConfigs RecurringMissionConfig[]
+  /// Farmer-role farm assignments (see FarmMembership).
+  memberships             FarmMembership[]
+  /// AURA conversations belonging to this farm (see
+  /// `AuraConversation`'s own doc comment for the per-user+per-farm scoping
+  /// rule).
+  auraConversations       AuraConversation[]
+}
+
+/// Mirrors `FarmPlotDefinition` (apps/operator/src/components/digital-twin/
+/// scene/farm-data.ts) field-for-field. `center`/`size` split
+/// into flat floats the same way the original draft (and this file's own
+/// Sensor `positionX`/`positionZ`) already do — plain Digital-Twin
+/// scene-space coordinates, not real geospatial data, so no PostGIS/geometry
+/// type is warranted. Read-only at the API layer — see this file's
+/// top-of-file note.
+model Plot {
+  id          String          @id
+  farmId      String
+  farm        Farm            @relation(fields: [farmId], references: [id])
+  label       String
+  centerX     Float
+  centerZ     Float
+  sizeWidth   Float
+  sizeDepth   Float
+  growthStage CropGrowthStage
+  createdAt   DateTime        @default(now())
+
+  sensors                 Sensor[]
+  droneMissions           DroneMission[]
+  robotMissions           RobotMission[]
+  cropFindings            CropFinding[]
+  recurringMissionConfigs RecurringMissionConfig[]
+
+  @@index([farmId])
+}
+
+/// Verbatim copy of `CropGrowthStage` (digital-twin/scene/farm-data.ts).
+enum CropGrowthStage {
+  seedling
+  growing
+  mature
+  fallow
+}
+
+// =============================================================================
+// Drones / Robots / Missions
+// =============================================================================
+
+/// Mirrors `DroneRecord`'s IDENTITY/SPEC fields only (`lib/fleet/types.ts`) —
+/// see this file's top-of-file note for why live telemetry is deliberately
+/// excluded. `homeLocation` split into flat floats, the same convention
+/// `Plot.centerX/centerZ` and `Sensor.positionX/positionZ` already use.
+model Drone {
+  id                   String            @id
+  farmId               String
+  farm                 Farm              @relation(fields: [farmId], references: [id])
+  name                 String
+  model                String
+  serialNumber         String
+  droneType            DroneType
+  cameraType           CameraType
+  batteryCapacityMah   Int
+  maxFlightTimeMinutes Int
+  communicationType    CommunicationType
+  firmwareVersion      String
+  homeLocationX        Float
+  homeLocationZ        Float
+  color                String
+  notes                String
+  createdAt            DateTime          @default(now())
+
+  missions                DroneMission[]
+  recurringMissionConfigs RecurringMissionConfig[]
+
+  @@index([farmId])
+}
+
+/// Verbatim copy of `DroneType` (lib/fleet/types.ts).
+enum DroneType {
+  quadcopter
+  hexacopter
+  octocopter
+  fixed_wing @map("fixed-wing")
+  vtol
+}
+
+/// Verbatim copy of `CameraType` (lib/fleet/types.ts).
+enum CameraType {
+  rgb
+  thermal
+  multispectral
+  rgb_thermal   @map("rgb-thermal")
+  none
+}
+
+/// Mirrors `RobotRecord`'s IDENTITY/SPEC fields only (`lib/robots/types.ts`)
+/// — same telemetry-exclusion rule as `Drone` above. `capabilities` stays a
+/// small, fixed-shape JSON object (mirrors `RobotCapabilities` exactly)
+/// rather than 6 extra boolean columns — same "don't over-engineer a small,
+/// always-read-as-a-whole value" reasoning `Sensor.readingHistory` already
+/// documents in this file.
+model Robot {
+  id                 String            @id
+  farmId             String
+  farm               Farm              @relation(fields: [farmId], references: [id])
+  name               String
+  model              String
+  manufacturer       String
+  robotType          RobotType
+  color              String
+  maxSpeedMps        Float
+  batteryCapacityMah Int
+  maxRuntimeMinutes  Int
+  communicationType  CommunicationType
+  homePositionX      Float
+  homePositionZ      Float
+  notes              String
+  capabilities       Json
+  createdAt          DateTime          @default(now())
+
+  missions                RobotMission[]
+  recurringMissionConfigs RecurringMissionConfig[]
+
+  @@index([farmId])
+}
+
+/// Verbatim copy of `RobotType` (lib/robots/types.ts).
+enum RobotType {
+  wheeled
+  tracked
+  quadruped
+  utility
+}
+
+/// Mirrors `MissionRecord` (`lib/missions/types.ts`) field-for-field.
+/// `targetPlotId`/`assignedDroneId` are REAL foreign keys (the
+/// gap the report flagged) — both nullable, both `onDelete:
+/// SetNull`, same "a historical mission must outlive the plot/vehicle it
+/// referenced" reasoning `Alert.sensorId`/`Sensor.assignedPlotId` already
+/// establish in this file: deleting a Plot or a Drone must never
+/// cascade-delete or block-delete a mission. `waypoints`/`estimate`/
+/// `sensorJustification` stay JSON — small, always-read-as-a-whole,
+/// never independently queried, same reasoning as `Sensor.readingHistory`.
+/// Only written at lifecycle boundaries (see top-of-file note) — never on
+/// the second-by-second simulation tick.
+model DroneMission {
+  id              String             @id
+  farmId          String
+  farm            Farm               @relation(fields: [farmId], references: [id])
+  name            String
+  missionType     DroneMissionType
+  targetPlotId    String?
+  targetPlot      Plot?              @relation(fields: [targetPlotId], references: [id], onDelete: SetNull)
+  assignedDroneId String?
+  assignedDrone   Drone?             @relation(fields: [assignedDroneId], references: [id], onDelete: SetNull)
+  status          DroneMissionStatus
+
+  altitude            Float
+  speedMps            Float
+  sideOverlapPercent  Float
+  frontOverlapPercent Float
+
+  homePositionX    Float?
+  homePositionZ    Float?
+  takeoffPositionX Float?
+  takeoffPositionZ Float?
+  landingPositionX Float?
+  landingPositionZ Float?
+  waypoints        Json
+  estimate         Json?
+
+  progressPercent         Float
+  coverageProgressPercent Float
+  currentWaypointIndex    Int
+  headingDegrees          Float?
+  batteryAtStartPercent   Float?
+
+  sensorJustification Json?
+
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  detectedFindings CropFinding[] @relation("DroneDetectedFindings")
+
+  // Set only on a run the recurring scheduler itself
+  // spawned (see `RecurringMissionConfig`); null for every ordinary
+  // manually-created mission, unchanged default. `onDelete: SetNull`: a
+  // completed run is real mission history and must outlive its schedule
+  // being deleted.
+  recurringConfigId String?
+  recurringConfig   RecurringMissionConfig? @relation("DroneRecurringRuns", fields: [recurringConfigId], references: [id], onDelete: SetNull)
+
+  @@index([farmId])
+  @@index([targetPlotId])
+  @@index([assignedDroneId])
+  @@index([recurringConfigId])
+}
+
+/// Verbatim copy of `MissionType` (lib/missions/types.ts).
+enum DroneMissionType {
+  survey
+  crop_health           @map("crop-health")
+  disease_scan          @map("disease-scan")
+  thermal_scan          @map("thermal-scan")
+  ndvi
+  rgb_capture           @map("rgb-capture")
+  irrigation_inspection @map("irrigation-inspection")
+  emergency_inspection  @map("emergency-inspection")
+  manual
+}
+
+/// Verbatim copy of `MissionStatus` (lib/missions/types.ts).
+enum DroneMissionStatus {
+  queued
+  preparing
+  taking_off @map("taking-off")
+  surveying
+  returning
+  landing
+  completed
+  paused
+  cancelled
+}
+
+/// Mirrors `RobotMissionRecord` (`lib/robot-missions/types.ts`) field-for-
+/// field — same reasoning as `DroneMission` above (real FKs, `SetNull`,
+/// JSON for small always-whole values, lifecycle-boundary-only writes).
+model RobotMission {
+  id              String             @id
+  farmId          String
+  farm            Farm               @relation(fields: [farmId], references: [id])
+  name            String
+  missionType     RobotMissionType
+  targetPlotId    String?
+  targetPlot      Plot?              @relation(fields: [targetPlotId], references: [id], onDelete: SetNull)
+  assignedRobotId String?
+  assignedRobot   Robot?             @relation(fields: [assignedRobotId], references: [id], onDelete: SetNull)
+  status          RobotMissionStatus
+
+  speedMps           Float
+  pathSpacingPercent Float
+
+  homePositionX   Float?
+  homePositionZ   Float?
+  startPositionX  Float?
+  startPositionZ  Float?
+  returnPositionX Float?
+  returnPositionZ Float?
+  waypoints       Json
+  estimate        Json?
+
+  progressPercent         Float
+  coverageProgressPercent Float
+  currentWaypointIndex    Int
+  headingDegrees          Float?
+  batteryAtStartPercent   Float?
+
+  sensorJustification Json?
+
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  detectedFindings CropFinding[] @relation("RobotDetectedFindings")
+  resolvedFindings CropFinding[] @relation("RobotResolvedFindings")
+
+  // Mirrors `DroneMission.recurringConfigId` exactly.
+  recurringConfigId String?
+  recurringConfig   RecurringMissionConfig? @relation("RobotRecurringRuns", fields: [recurringConfigId], references: [id], onDelete: SetNull)
+
+  @@index([farmId])
+  @@index([targetPlotId])
+  @@index([assignedRobotId])
+  @@index([recurringConfigId])
+}
+
+/// Verbatim copy of `RobotMissionType` (lib/robot-missions/types.ts).
+enum RobotMissionType {
+  crop_inspection         @map("crop-inspection")
+  weed_detection          @map("weed-detection")
+  targeted_spraying       @map("targeted-spraying")
+  precision_fertilization @map("precision-fertilization")
+  soil_sampling           @map("soil-sampling")
+  seed_planting           @map("seed-planting")
+  ground_imaging          @map("ground-imaging")
+  autonomous_patrol       @map("autonomous-patrol")
+  manual_drive            @map("manual-drive")
+}
+
+/// Verbatim copy of `RobotMissionStatus` (lib/robot-missions/types.ts).
+enum RobotMissionStatus {
+  queued
+  preparing
+  driving
+  working
+  returning
+  completed
+  paused
+  cancelled
+}
+
+// =============================================================================
+// Crop Inspection Findings
+// =============================================================================
+//
+// A finding is a SIMULATED agricultural-issue detection made by a drone or
+// robot mission while surveying/working over its target plot. Deliberately
+// the ONLY new table this change adds: the candidate issues themselves (what
+// COULD be found on a given plot) are never persisted — they're generated
+// in-memory, deterministically, from (missionId, plotId) — see
+// apps/operator/src/lib/findings/issue-generator.ts. Only issues an actual
+// mission tick came close enough to detect get a row here, so there is no
+// second "potential issues" table shadowing this one.
+//
+/// Mirrors `CropFinding` (lib/findings/types.ts) field-for-field, same
+/// conventions `DroneMission`/`RobotMission` already establish: real FKs,
+/// `onDelete: SetNull` for the detecting/resolving mission (a finding must
+/// outlive the mission that made it — it's a historical record), `onDelete:
+/// Cascade` for plot (a finding about a plot that no longer exists has
+/// nothing left to describe). Exactly one of `detectedByDroneMissionId`/
+/// `detectedByRobotMissionId` is ever set, matching `detectionMethod` —
+/// enforced by application logic (this app has no polymorphic-FK pattern
+/// anywhere else either; two nullable typed FKs is the same flat,
+/// denormalized style `Plot.centerX/centerZ` already uses instead of a
+/// nested value).
+model CropFinding {
+  id     String @id
+  farmId String
+  farm   Farm   @relation(fields: [farmId], references: [id])
+  plotId String
+  plot   Plot   @relation(fields: [plotId], references: [id], onDelete: Cascade)
+
+  issueType   CropIssueType
+  severity    CropIssueSeverity
+  positionX   Float
+  positionZ   Float
+  description String
+  status      CropFindingStatus
+
+  detectionMethod          CropFindingDetectionMethod
+  detectedByDroneMissionId String?
+  detectedByDroneMission   DroneMission?              @relation("DroneDetectedFindings", fields: [detectedByDroneMissionId], references: [id], onDelete: SetNull)
+  detectedByRobotMissionId String?
+  detectedByRobotMission   RobotMission?              @relation("RobotDetectedFindings", fields: [detectedByRobotMissionId], references: [id], onDelete: SetNull)
+
+  /// Non-null only when a robot mission actually performed a simulated
+  /// corrective action (see lib/findings/types.ts's robot capability map) —
+  /// never set merely because an issue was detected.
+  correctiveActionType        String?
+  correctiveActionDescription String?
+  resolvedByRobotMissionId    String?
+  resolvedByRobotMission      RobotMission? @relation("RobotResolvedFindings", fields: [resolvedByRobotMissionId], references: [id], onDelete: SetNull)
+
+  detectedAt DateTime  @default(now())
+  resolvedAt DateTime?
+
+  // The back-relation `Alert.findingId` requires. At most
+  // one Alert per finding (the FK is `@unique`), so this is `Alert?`, not
+  // `Alert[]`.
+  alert Alert?
+
+  @@index([farmId])
+  @@index([plotId])
+  @@index([detectedByDroneMissionId])
+  @@index([detectedByRobotMissionId])
+}
+
+/// Verbatim copy of `CropIssueType` (lib/findings/types.ts).
+enum CropIssueType {
+  dry_soil            @map("dry-soil")
+  nutrient_deficiency @map("nutrient-deficiency")
+  weed_growth         @map("weed-growth")
+  pest_activity       @map("pest-activity")
+  fungal_risk         @map("fungal-risk")
+  standing_water      @map("standing-water")
+  crop_stress         @map("crop-stress")
+  damaged_crop_area   @map("damaged-crop-area")
+}
+
+/// Verbatim copy of `CropIssueSeverity` (lib/findings/types.ts).
+enum CropIssueSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+/// Verbatim copy of `CropFindingStatus` (lib/findings/types.ts). Only 3 real
+/// persisted states — "Action Available"/"Action Performed" (the fuller
+/// vocabulary the UI distinguishes) are
+/// DERIVED at render time from `status` + `issueType` (via the robot
+/// capability map) + whether `correctiveActionType` is set, rather than
+/// adding two more states that would always be redundant with those already-
+/// persisted fields.
+enum CropFindingStatus {
+  detected
+  resolved
+  requires_human_action @map("requires-human-action")
+}
+
+/// Verbatim copy of `CropFindingDetectionMethod` (lib/findings/types.ts).
+enum CropFindingDetectionMethod {
+  drone
+  robot
+}
+
+// =============================================================================
+// Recurring Missions
+// =============================================================================
+//
+// A schedule that repeatedly spawns real, distinct DroneMission/RobotMission
+// rows — deliberately NOT a template that IS itself one of the numbered
+// runs ("Run 1 → mission ID A, Run 2 → mission ID B..." — every run,
+// including the first, is its own mission id). This is genuinely new
+// information (an interval + next-run-time + which run is currently
+// active) that neither Mission table already has any column for, so a new
+// model is the smallest correct addition — bolting 4+ recurrence columns
+// onto BOTH DroneMission and RobotMission (which would also need a
+// self-referential FK to link runs back to their template) would be a
+// larger, messier change than one small dedicated table. Each spawned run
+// links back here via its own `recurringConfigId` (added above);
+// `activeRunId` here points the other way, at whichever run — if any — is
+// currently in flight, which is what Part 12's overlap prevention checks.
+model RecurringMissionConfig {
+  id     String @id
+  farmId String
+  farm   Farm   @relation(fields: [farmId], references: [id])
+  name   String
+
+  vehicleKind RecurringVehicleKind
+
+  // Exactly one of these two is set, matching `vehicleKind` — same "two
+  // nullable typed fields, never a polymorphic FK" convention
+  // `CropFinding.detectedByDroneMissionId`/`detectedByRobotMissionId`
+  // already establishes in this schema.
+  droneMissionType DroneMissionType?
+  robotMissionType RobotMissionType?
+
+  targetPlotId String?
+  targetPlot   Plot?   @relation(fields: [targetPlotId], references: [id], onDelete: SetNull)
+
+  assignedDroneId String?
+  assignedDrone   Drone?  @relation(fields: [assignedDroneId], references: [id], onDelete: SetNull)
+  assignedRobotId String?
+  assignedRobot   Robot?  @relation(fields: [assignedRobotId], references: [id], onDelete: SetNull)
+
+  intervalMinutes Int
+  enabled         Boolean   @default(true)
+  /// When the scheduler should spawn the next run — null while a run is
+  /// currently active (Part 12's overlap guard: no next run is scheduled
+  /// until the active one completes and this gets recomputed).
+  nextRunAt       DateTime?
+  /// The currently in-flight spawned run's id (a DroneMission.id or
+  /// RobotMission.id, whichever `vehicleKind` says) — null when no run
+  /// from this schedule is active right now.
+  activeRunId     String?
+
+  createdAt DateTime @default(now())
+
+  droneRuns DroneMission[] @relation("DroneRecurringRuns")
+  robotRuns RobotMission[] @relation("RobotRecurringRuns")
+
+  @@index([farmId])
+  @@index([assignedDroneId])
+  @@index([assignedRobotId])
+}
+
+enum RecurringVehicleKind {
+  drone
+  robot
+}
+
+/// Mirrors `SensorAlertRecord` (apps/operator/src/lib/sensor-analytics/types.ts)
+/// field-for-field. `sensorId` is now a REAL foreign key (it was a plain
+/// string earlier, before the Sensor model existed).
+/// Nullable, `onDelete: SetNull` — NOT `Cascade` and NOT `Restrict`: alerts
+/// are explicitly "never deleted, only resolved" (the frontend's own
+/// `resolveAlert()` already documents and enforces this), so deleting the
+/// SENSOR a past alert was about must not delete or block-deleting the
+/// alert itself — it should just let that historical record outlive the
+/// sensor it was about, exactly like a real incident log would. `sensorName`
+/// stays a separate, always-populated denormalized field for exactly this
+/// case: once `sensor` is null (the sensor was removed), `sensorName` is
+/// the only remaining record of which sensor the alert was about — and it's
+/// also what `alerts-page.tsx`/`collect-context.ts` already read directly,
+/// with no join, which this preserves.
+model Alert {
+  id         String        @id @default(cuid())
+  farmId     String
+  farm       Farm          @relation(fields: [farmId], references: [id])
+  sensorId   String?
+  sensor     Sensor?       @relation(fields: [sensorId], references: [id], onDelete: SetNull)
+  sensorName String
+  alertType  AlertType
+  severity   AlertSeverity
+  message    String
+  // Nullable (was required): a crop-finding-linked alert
+  // has no honest sensor reading to put here. Every EXISTING sensor alert
+  // keeps writing a real value; only the new finding path leaves it null.
+  value      Float?
+  createdAt  DateTime      @default(now())
+  resolvedAt DateTime?
+
+  // CropFinding → Alert integration. `@unique` is what
+  // lets the finding-linked write path `upsert` by findingId (create the
+  // alert on first detection, flip it to resolved in place when the
+  // finding resolves) instead of needing the same fragile "local id vs
+  // real database id" workaround `alert-store.ts`'s own doc comment
+  // already describes for ordinary sensor alerts — CropFinding rows
+  // already use stable, deterministic ids (see `finding-store.ts`), so
+  // this FK is always the SAME real id the client already has, with no
+  // round-trip needed first. `onDelete: SetNull` (not Cascade): an alert
+  // is a historical record and must survive its finding being removed,
+  // exactly like `sensorId`'s own precedent above.
+  findingId String?      @unique
+  finding   CropFinding? @relation(fields: [findingId], references: [id], onDelete: SetNull)
+
+  @@index([farmId])
+  @@index([farmId, resolvedAt])
+  @@index([sensorId])
+}
+
+/// Mirrors `SensorRecord` (apps/operator/src/lib/sensors/types.ts)
+/// field-for-field. Split the same way `Drone`/`Robot` were
+/// proposed in the original schema audit and the way `SensorRecord` itself already
+/// documents: identity/spec fields set once at creation vs. live/simulated
+/// fields updated by the simulation ticker — both stay on one row (no
+/// separate "current state" table), same reasoning as the Drone/Robot
+/// design. `readingHistory` is a small (24-entry cap, enforced client-side
+/// exactly as today), always-read-as-a-whole sparkline array — kept as JSON
+/// rather than a child table — over-engineering for something this small
+/// and never
+/// independently queried.
+model Sensor {
+  id                      String            @id
+  farmId                  String
+  farm                    Farm              @relation(fields: [farmId], references: [id])
+  name                    String
+  sensorType              SensorType
+  serialNumber            String
+  positionX               Float
+  positionZ               Float
+  /// Real foreign key (was a plain string earlier, before
+  /// Plot existed). Nullable, `onDelete: SetNull` — same reasoning as
+  /// `Alert.sensorId` above: a sensor that loses its plot assignment (the
+  /// plot was removed) should stay a valid sensor, not be deleted or block
+  /// the plot's removal.
+  assignedPlotId          String?
+  assignedPlot            Plot?             @relation(fields: [assignedPlotId], references: [id], onDelete: SetNull)
+  communicationType       CommunicationType
+  batteryCapacityMah      Int
+  samplingIntervalSeconds Int
+  gateway                 String
+  firmwareVersion         String
+  installedAt             DateTime
+  notes                   String
+  batteryPowered          Boolean
+  gatewayConnected        Boolean
+
+  status          SensorStatus
+  health          SensorHealth
+  batteryPercent  Float
+  signalPercent   Int
+  currentReading  Float
+  previousReading Float
+  readingHistory  Json
+  lastReadingAt   DateTime
+  lastUpdatedAt   DateTime
+
+  createdAt DateTime @default(now())
+
+  alerts Alert[]
+
+  @@index([farmId])
+  @@index([assignedPlotId])
+}
+
+/// Verbatim copy of `SensorType` (sensors/types.ts) — all 18 members.
+enum SensorType {
+  soil_moisture    @map("soil-moisture")
+  soil_temperature @map("soil-temperature")
+  air_temperature  @map("air-temperature")
+  humidity
+  ph
+  ec
+  nitrogen
+  phosphorus
+  potassium
+  rain_gauge       @map("rain-gauge")
+  wind_speed       @map("wind-speed")
+  wind_direction   @map("wind-direction")
+  solar_radiation  @map("solar-radiation")
+  light_intensity  @map("light-intensity")
+  leaf_wetness     @map("leaf-wetness")
+  water_tank_level @map("water-tank-level")
+  flow_meter       @map("flow-meter")
+  weather_station  @map("weather-station")
+}
+
+/// Verbatim copy of `SensorStatus` (sensors/types.ts).
+enum SensorStatus {
+  online
+  offline
+  warning
+  critical
+  maintenance
+}
+
+/// Verbatim copy of `SensorHealth` (sensors/types.ts) — same 3 members `Drone`/`Robot` health already use.
+enum SensorHealth {
+  nominal
+  attention
+  critical
+}
+
+/// Verbatim copy of `CommunicationType` (lib/fleet/types.ts, re-exported by sensors/types.ts — Sensor reuses the Drone/Robot radio vocabulary, same as the frontend does).
+enum CommunicationType {
+  wifi
+  radio
+  cellular
+  satellite
+}
+
+/// Verbatim copy of `AlertType` (sensor-analytics/types.ts).
+enum AlertType {
+  low_soil_moisture    @map("low-soil-moisture")
+  low_battery          @map("low-battery")
+  poor_signal          @map("poor-signal")
+  abnormal_temperature @map("abnormal-temperature")
+  sensor_offline       @map("sensor-offline")
+  // A single generic marker, not one value per
+  // CropIssueType: the finding's own `issueType` (read via the `finding`
+  // relation above) is already the detailed classification; duplicating
+  // all 8 crop issue types into this enum too would be the same kind of
+  // "second, competing classification" the app's other domains
+  // deliberately avoid.
+  crop_finding         @map("crop-finding")
+}
+
+/// Verbatim copy of `AlertSeverity` (sensor-analytics/types.ts).
+enum AlertSeverity {
+  warning
+  critical
+}
+
+// =============================================================================
+// AURA Chat History
+// =============================================================================
+//
+// The FIRST persisted conversation model in this schema — before this,
+// `useAuraChatStore` (lib/aura/client/aura-chat-store.ts) held messages in a
+// plain in-memory Zustand store, lost on refresh. No pre-existing model came
+// close to this shape, so these are genuinely new, minimal tables — exactly
+// exactly the two tables needed, no extra columns speculatively added.
+//
+// Scoped by BOTH `userId` and `farmId` (not farmId alone): two farmers on the
+// same farm (a real, already-supported case via `FarmMembership`) must not
+// see each other's conversations — "a Farmer cannot access
+// another farmer's conversations" is a per-USER boundary, stricter than the
+// per-farm boundary every other model in this file uses. Every service
+// function takes both explicitly and every caller derives both from the
+// authenticated session (`getFarmForSession` + `session.user.id`), never
+// from client input — same non-negotiable rule `findings-service.ts`'s own
+// doc comment already establishes for `farmId`.
+//
+// Deleting a conversation or clearing all removes ONLY
+// these two tables' rows — neither has any relation to Farm/Plot/Finding/
+// Mission/Alert, so there is no possible cascade into real operational data.
+model AuraConversation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  farmId    String
+  farm      Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  title     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  messages AuraMessage[]
+
+  @@index([userId, farmId, updatedAt])
+}
+
+model AuraMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   AuraConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           AuraMessageRole
+  content        String
+  createdAt      DateTime         @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+enum AuraMessageRole {
+  user
+  assistant
+}
+
+/// AURA Dynamic Provider + Model Routing Control
+/// Center — the durable replacement for the earlier in-memory
+/// `AURA_ENDPOINTS`/`AURA_ROUTING_ORDER` arrays (`router/endpoint-registry.ts`).
+/// A "provider credential" (an env var name — `GEMINI_API_KEY`,
+/// `GEMINI_2_API_KEY`,...) and a "routable endpoint" (one specific model
+/// reachable through one specific credential) are now genuinely separate
+/// concepts: a Gemini credential can back any number of these rows, each
+/// naming a different model, and each is an independent fallback candidate.
+///
+/// Deliberately GLOBAL, not farm-scoped — AURA routing is an
+/// operator/process-wide configuration decision (which models exist and in
+/// what order), never a per-farm setting, exactly like the in-memory arrays
+/// it replaces.
+///
+/// `provider` is a plain String (not an enum) so a genuinely new provider
+/// can be added without a schema migration — the same "provider-agnostic,
+/// no `if provider === X` in the router" principle the routing
+/// engine follows, extended to persistence. The application layer narrows
+/// it to the existing `ProviderId` union (`"gemini" | "groq" | "openrouter"`)
+/// at the boundary.
+///
+/// `credentialEnv` and `model` are NAMES/IDENTIFIERS ONLY — this table never
+/// stores a secret value; the actual API key continues to come from
+/// `process.env[credentialEnv]` at request time, exactly as
+/// `isEndpointConfigured`/`resolveKey` already do.
+///
+/// `priority` was a single GLOBAL fallback order; capability-aware
+/// routing replaces it as the ROUTING
+/// signal — real fallback order is now per-capability, in
+/// `AuraRouteCapabilityPriority` below (exactly the extension point this
+/// comment used to describe as a future option). `priority` is kept, not
+/// dropped (no destructive column removal for a field with real persisted
+/// Operator data), and repurposed as the display order for the
+/// capability-agnostic "all endpoints" management list (Add Model/enable/
+/// disable/remove) — it no longer has any effect on which endpoint AURA
+/// actually tries first for a given request.
+model AuraRouteEndpoint {
+  id            String   @id @default(cuid())
+  provider      String
+  credentialEnv String
+  model         String
+  displayName   String
+  capabilities  String[]
+  enabled       Boolean  @default(true)
+  priority      Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  capabilityPriorities AuraRouteCapabilityPriority[]
+
+  /// Same provider + same credential + same model would be a genuine
+  /// duplicate fallback candidate (identical requests, identical quota) —
+  /// rejected at the API layer using this constraint, per this change's own
+  /// "prevent duplicate endpoint" requirement.
+  @@unique([provider, credentialEnv, model])
+  @@index([priority])
+}
+
+/// AURA Capability-Aware Routing & Operator-
+/// Controlled Fallback Order — one row means "this endpoint PARTICIPATES
+/// in this capability's fallback chain, at this priority." The row's mere
+/// EXISTENCE is the participation flag ("capability routing
+/// participation" is a genuinely separate concept from the endpoint's
+/// global `enabled` flag above) — no endpoint row for
+/// (endpointId, "image") means that endpoint is simply not in the IMAGE
+/// chain, without affecting whether it's in TEXT's chain or its own global
+/// enabled state at all.
+///
+/// `capability` is a plain String (not an enum), mirroring
+/// `AuraRouteEndpoint.provider`'s own reasoning — the application layer
+/// narrows it to the existing `AuraCapability` union
+/// (`"text" | "image" | "voice"`) at the boundary, and validates on every
+/// write that the endpoint's own `capabilities` array actually includes it
+/// ("The router must enforce capability compatibility on the
+/// SERVER... even if an invalid configuration is manually submitted").
+///
+/// `onDelete: Cascade` — deleting a routable endpoint (the existing
+/// `DELETE /api/aura/router/endpoints/:id`) correctly removes its
+/// participation from every capability chain too; there is no scenario
+/// where a stale priority row should outlive the endpoint it points to.
+model AuraRouteCapabilityPriority {
+  id         String            @id @default(cuid())
+  endpointId String
+  endpoint   AuraRouteEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  capability String
+  priority   Int
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @default(now()) @updatedAt
+
+  /// One participation row per endpoint per capability — an endpoint can't
+  /// be in TEXT's chain twice, only ever at one priority within it.
+  @@unique([endpointId, capability])
+  @@index([capability, priority])
+}
