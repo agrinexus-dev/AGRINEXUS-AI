@@ -13,7 +13,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\" --ignore-unknown",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\" --ignore-unknown",
     "type-check": "turbo run type-check",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "postinstall": "pnpm --filter backend run db:generate"
   },
   "devDependencies": {
     "@agrinexus/config": "workspace:*",
