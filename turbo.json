@@ -4,7 +4,17 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"],
+      "env": [
+        "DATABASE_URL",
+        "DIRECT_URL",
+        "AUTH_SECRET",
+        "GEMINI_API_KEY",
+        "GEMINI_2_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GROQ_API_KEY",
+        "GROQ_MODEL"
+      ]
     },
     "dev": {
       "cache": false,
